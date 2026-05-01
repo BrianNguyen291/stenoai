@@ -20,12 +20,19 @@ logger = logging.getLogger(__name__)
 def normalize_markdown(text: Optional[str]) -> Optional[str]:
     """Fix common LLM markdown spacing issues (e.g. CJK output without ASCII spaces).
 
+    - Collapse split heading markers: `# #` → `##`, `# # #` → `###` (small models do this)
     - Insert space after #/##/### heading markers if missing
     - Insert space after - or * bullet markers if missing
     - Collapse 3+ consecutive blank lines to 2
     """
     if not text:
         return text
+    # Collapse `# #`, `# # #` etc at line start into compact `##`, `###`
+    text = re.sub(
+        r'(?m)^(#)(?:\s+#){1,5}',
+        lambda m: '#' * (m.group(0).count('#')),
+        text,
+    )
     # Heading: ###text -> ### text
     text = re.sub(r'(?m)^(#{1,6})(?=\S)', r'\1 ', text)
     # Bullet: -text or *text at line start -> - text / * text
