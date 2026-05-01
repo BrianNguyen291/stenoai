@@ -5279,7 +5279,11 @@ Session started - waiting for activity...
                             alert(`Upload failed: ${res.error}`);
                         }
                     } else {
-                        // Trigger meetings list refresh; processing happens in background queue
+                        // Show every queued upload in the sidebar immediately, even before
+                        // the queue picks them up. processing-started will refine state once each runs.
+                        if (Array.isArray(res.items)) {
+                            res.items.forEach(item => upsertProcessingMeeting(item.sessionName));
+                        }
                         if (typeof loadMeetings === 'function') loadMeetings();
                     }
                 } catch (e) {
@@ -6559,6 +6563,33 @@ Session started - waiting for activity...
                 action_items: [],
                 transcript: '',
             });
+            filterMeetings();
+        }
+
+        // Show queued/in-flight uploads in the sidebar so user can see multiple files in flight.
+        function upsertProcessingMeeting(sessionName) {
+            if (!sessionName) return;
+            // If already exists (real or placeholder), don't duplicate
+            if (meetings.some(m => m.session_info?.name === sessionName)) return;
+            meetings.unshift({
+                is_processing_placeholder: true,
+                session_info: {
+                    name: sessionName,
+                    processed_at: new Date().toISOString(),
+                    duration_seconds: null,
+                },
+                summary: '',
+                key_points: [],
+                action_items: [],
+                transcript: '',
+            });
+            processingMeetings.add(sessionName);
+            filterMeetings();
+        }
+        function removeProcessingMeeting(sessionName) {
+            if (!sessionName) return;
+            meetings = meetings.filter(m => !(m.is_processing_placeholder && m.session_info?.name === sessionName));
+            processingMeetings.delete(sessionName);
             filterMeetings();
         }
 
@@ -9318,6 +9349,14 @@ Session started - waiting for activity...
         }
 
         ipcRenderer.on('summary-chunk', (event, data) => {
+            // Only paint chunks belonging to the currently-displayed session.
+            // Background uploads streaming a summary should NOT bleed into a
+            // different meeting the user has navigated to.
+            const displayedSession = selectedMeeting?.session_info?.name || detailTitle.textContent;
+            const isActiveSession = !displayedSession || displayedSession === data.sessionName;
+            if (!isActiveSession) {
+                return;
+            }
             if (!streamingActive) {
                 streamingActive = true;
                 streamedMarkdown = '';
@@ -9396,6 +9435,8 @@ Session started - waiting for activity...
             _uploadQueueState.current = data.sessionName;
             _uploadQueueState.currentPhase = 'Processing';
             _renderUploadToast();
+            // Show placeholder in sidebar so user sees multi-file queue
+            upsertProcessingMeeting(data.sessionName);
         });
         ipcRenderer.on('summary-chunk', (event, data) => {
             if (_uploadQueueState.current === data.sessionName) {
@@ -9407,6 +9448,7 @@ Session started - waiting for activity...
         ipcRenderer.on('processing-complete', (event, data) => {
             log(`Processing complete for: ${data.sessionName}`);
             processingMeetings.delete(data.sessionName);
+            removeProcessingMeeting(data.sessionName);
             // Decrement queue counter; clear if this was the active job
             if (_uploadQueueState.queueSize > 0) _uploadQueueState.queueSize -= 1;
             if (_uploadQueueState.current === data.sessionName) {

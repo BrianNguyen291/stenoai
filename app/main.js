@@ -1118,6 +1118,7 @@ ipcMain.handle('reprocess-meeting', async (event, summaryFile, regenerateTitle, 
         const msg = data.toString().trim();
         if (msg) {
           stderrBuf += msg + '\n';
+          console.log('subproc stderr:', msg);
           sendDebugLog(`STDERR: ${msg}`);
         }
       });
@@ -1557,6 +1558,7 @@ async function processNextInQueue() {
         const msg = data.toString().trim();
         if (msg) {
           stderrBuf += msg + '\n';
+          console.log('subproc stderr:', msg);
           sendDebugLog(`STDERR: ${msg}`);
         }
       });

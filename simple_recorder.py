@@ -606,6 +606,12 @@ Transcript:
 
         print("🧠 Generating summary...", flush=True)
         streamed_chunks = []
+        # Persist a partial .md to disk while streaming. If Electron (parent) dies
+        # mid-stream, this file survives and gives the user the LLM output instead
+        # of "No summary available". Final save below replaces it with structured
+        # frontmatter + parsed JSON.
+        partial_path = self.output_dir / f"{audio_path.stem}_summary.md"
+        partial_chunks_since_flush = 0
         for chunk in self.summarizer.summarize_transcript_streaming(
             text_for_summary, duration_minutes, output_language, notes_text
         ):
@@ -613,6 +619,14 @@ Transcript:
             sys.stdout.write(f"CHUNK:{encoded}\n")
             sys.stdout.flush()
             streamed_chunks.append(chunk)
+            partial_chunks_since_flush += 1
+            # Flush partial to disk every ~20 chunks (cheap, batches IO)
+            if partial_chunks_since_flush >= 20:
+                try:
+                    partial_path.write_text(''.join(streamed_chunks), encoding='utf-8')
+                    partial_chunks_since_flush = 0
+                except Exception:
+                    pass
         from src.summarizer import normalize_markdown
         from src.chinese import apply_variant
         streamed_md = normalize_markdown(''.join(streamed_chunks)) or ''
@@ -621,6 +635,11 @@ Transcript:
             variant = get_config().get_chinese_variant()
             if variant:
                 streamed_md = apply_variant(streamed_md, variant) or streamed_md
+        except Exception:
+            pass
+        # Write full normalized partial before STREAM_COMPLETE so abrupt kill keeps content
+        try:
+            partial_path.write_text(streamed_md, encoding='utf-8')
         except Exception:
             pass
 
