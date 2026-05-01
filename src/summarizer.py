@@ -1048,21 +1048,20 @@ TITLE:"""
             return None
 
     def _build_query_prompt(self, transcript: str, question: str, language: str = "en") -> str:
-        if language and language not in ("en", "auto"):
-            from .config import get_config
-            language_name = get_config().get_language_name(language)
-            query_lang_instruction = f"\nRespond in {language_name}." if language_name != "Unknown" else ""
-        else:
-            query_lang_instruction = ""
+        # Respond in the SAME language as the user's question, not the meeting language.
+        # The meeting may be in Chinese but the user can ask in English and expects English back.
         return f"""Answer the following question based on the meeting content below (summary, key topics, and transcript).
 Be concise and direct. If the answer requires inference from what was discussed, that's fine.
-Only say you don't know if the topic truly wasn't discussed at all.{query_lang_instruction}
+Only say you don't know if the topic truly wasn't discussed at all.
+
+LANGUAGE RULE: Detect the language of the QUESTION below. Respond in that exact same language. If the question is in English, your answer MUST be entirely in English even if the meeting transcript is in another language. If the question is in Chinese, answer in Chinese. Never mix languages.
 
 QUESTION: {question}
 
+MEETING CONTENT:
 {transcript}
 
-ANSWER:"""
+ANSWER (in the same language as the QUESTION):"""
 
     def query_transcript_streaming(self, transcript: str, question: str, language: str = "en"):
         """Generator that yields text chunks from the LLM for a transcript query."""
