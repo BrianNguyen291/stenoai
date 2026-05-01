@@ -581,7 +581,15 @@ Transcript:
             sys.stdout.flush()
             streamed_chunks.append(chunk)
         from src.summarizer import normalize_markdown
+        from src.chinese import apply_variant
         streamed_md = normalize_markdown(''.join(streamed_chunks)) or ''
+        # Apply Chinese variant conversion (LLM may emit either form regardless of prompt)
+        try:
+            variant = get_config().get_chinese_variant()
+            if variant:
+                streamed_md = apply_variant(streamed_md, variant) or streamed_md
+        except Exception:
+            pass
 
         print("STREAM_COMPLETE", flush=True)
 
@@ -914,7 +922,15 @@ def process_streaming(audio_file, name, notes):
             sys.stdout.flush()
             streamed_chunks.append(chunk)
         from src.summarizer import normalize_markdown
+        from src.chinese import apply_variant
         streamed_md = normalize_markdown(''.join(streamed_chunks)) or ''
+        # Apply Chinese variant conversion (LLM may emit either form regardless of prompt)
+        try:
+            variant = get_config().get_chinese_variant()
+            if variant:
+                streamed_md = apply_variant(streamed_md, variant) or streamed_md
+        except Exception:
+            pass
 
         print("STREAM_COMPLETE", flush=True)
 
@@ -1497,7 +1513,15 @@ def reprocess(summary_file, regenerate_title):
             sys.stdout.flush()
             streamed_chunks.append(chunk)
         from src.summarizer import normalize_markdown
+        from src.chinese import apply_variant
         streamed_md = normalize_markdown(''.join(streamed_chunks)) or ''
+        # Apply Chinese variant conversion (LLM may emit either form regardless of prompt)
+        try:
+            variant = get_config().get_chinese_variant()
+            if variant:
+                streamed_md = apply_variant(streamed_md, variant) or streamed_md
+        except Exception:
+            pass
 
         print("STREAM_COMPLETE", flush=True)
 

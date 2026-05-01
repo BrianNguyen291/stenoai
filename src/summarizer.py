@@ -943,6 +943,16 @@ TITLE:"""
             if len(words) > 6:
                 title = " ".join(words[:6])
 
+            # Apply Chinese variant conversion if user picked Hans/Hant
+            try:
+                from .config import get_config
+                from .chinese import apply_variant
+                variant = get_config().get_chinese_variant()
+                if variant:
+                    title = apply_variant(title, variant) or title
+            except Exception:
+                pass
+
             # Only return if we got something meaningful
             if title and len(title) > 2:
                 logger.info(f"Generated meeting title: {title}")
