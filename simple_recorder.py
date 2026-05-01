@@ -688,7 +688,8 @@ Transcript:
         md_lines.append('')
         md_lines.append('## Transcript')
         md_lines.append('')
-        md_lines.append(diarised_text or transcript_text)
+        # Prefer cleaned transcript (one-LLM-pass dedupe + punctuation) if available
+        md_lines.append(transcript_data.get('transcript_text_clean') or diarised_text or transcript_text)
         if notes_text:
             md_lines.append('')
             md_lines.append('## User Notes')
@@ -953,6 +954,38 @@ def process_streaming(audio_file, name, notes):
 
         print(f"TRANSCRIPTION_COMPLETE:{len(transcript_text)}", flush=True)
 
+        # Step 1b: Clean raw transcript via one LLM pass (dedupe stereo bleed, add punctuation)
+        try:
+            if recorder.summarizer is None:
+                recorder.summarizer = OllamaSummarizer()
+            from src.config import get_config as _get_config
+            _cfg = _get_config()
+            _output_lang = recorder._resolve_output_language(
+                _cfg.get_language(), transcript_data.get("detected_language")
+            )
+            print("🧹 Cleaning transcript...", flush=True)
+            cleaned = recorder.summarizer.clean_transcript(text_for_summary, language=_output_lang)
+            if cleaned and len(cleaned) > 20:
+                # Apply Chinese variant conversion to cleaned output
+                try:
+                    from src.chinese import apply_variant
+                    variant = _cfg.get_chinese_variant()
+                    if variant:
+                        cleaned = apply_variant(cleaned, variant) or cleaned
+                except Exception:
+                    pass
+                # Persist cleaned transcript alongside raw, and use it downstream
+                cleaned_path = recorder.transcripts_dir / f"{Path(audio_file).stem}_transcript_clean.txt"
+                try:
+                    cleaned_path.write_text(cleaned, encoding='utf-8')
+                except Exception as e:
+                    logger.warning(f"Failed to save cleaned transcript: {e}")
+                text_for_summary = cleaned
+                # Also surface it as the displayed transcript_text so UI shows clean version
+                transcript_data["transcript_text_clean"] = cleaned
+        except Exception as e:
+            logger.warning(f"Transcript cleanup step failed, continuing with raw: {e}")
+
         # Step 2: Stream summary
         if recorder.summarizer is None:
             recorder.summarizer = OllamaSummarizer()
@@ -1033,7 +1066,8 @@ def process_streaming(audio_file, name, notes):
         md_lines.append('')
         md_lines.append('## Transcript')
         md_lines.append('')
-        md_lines.append(diarised_text or transcript_text)
+        # Prefer cleaned transcript (one-LLM-pass dedupe + punctuation) if available
+        md_lines.append(transcript_data.get('transcript_text_clean') or diarised_text or transcript_text)
         if notes_text:
             md_lines.append('')
             md_lines.append('## User Notes')

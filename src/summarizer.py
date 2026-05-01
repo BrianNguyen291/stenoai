@@ -896,6 +896,66 @@ TRANSCRIPT:
         """Cleanup when object is destroyed."""
         self.cleanup()
 
+    def clean_transcript(self, transcript: str, language: str = "en") -> Optional[str]:
+        """One-shot LLM pass to clean a raw whisper transcript.
+
+        - Removes cross-channel duplicate phrases (stereo recordings often repeat content)
+        - Adds punctuation and sentence breaks
+        - Preserves speaker labels [You]/[Others] if present
+        - Keeps original meaning and language; does not summarise
+
+        Returns cleaned transcript text, or None on failure.
+        """
+        if not transcript or not transcript.strip():
+            return None
+        # Cap input to keep costs/latency bounded; very long transcripts get chunked elsewhere
+        max_chars = 60000
+        truncated = transcript[:max_chars]
+        if len(transcript) > max_chars:
+            logger.warning(f"clean_transcript: truncating from {len(transcript)} to {max_chars} chars")
+
+        # Build language instruction
+        language_name = ""
+        if language and language not in ("en", "auto"):
+            from .config import get_config
+            language_name = get_config().get_language_name(language)
+            if language_name == "Unknown":
+                language_name = ""
+
+        lang_rule = f"\n- Output MUST be in {language_name}. Do not translate." if language_name else ""
+
+        prompt = f"""Clean up this raw automatic-speech-recognition transcript. Rules:
+- Keep the original meaning and content. Do NOT summarise. Do NOT add information.
+- Remove duplicated phrases that appear because of stereo channel bleed (the same sentence often appears twice in a row).
+- Add punctuation, sentence breaks, and paragraph breaks where natural.
+- Preserve speaker labels exactly if present: [You] for the recorder, [Others] for the other party. If labels are not present, use blank lines between speaker turns.
+- Preserve timestamps in the form [mm:ss] if present.
+- Drop obvious filler tokens (uh, um, repeated single-character noise) only when not meaningful.
+- Output ONLY the cleaned transcript text. No preamble. No commentary.{lang_rule}
+
+RAW TRANSCRIPT:
+{truncated}
+
+CLEANED TRANSCRIPT:"""
+        try:
+            if self.ai_provider == "cloud":
+                response_text = self._cloud_chat(prompt, 300)
+            else:
+                resp_client = ollama.Client(
+                    host=self.remote_url if self.ai_provider == "remote" else None,
+                    timeout=300,
+                )
+                resp = resp_client.chat(
+                    model=self.model_name,
+                    messages=[{'role': 'user', 'content': prompt}],
+                )
+                response_text = resp['message']['content']
+            cleaned = (response_text or "").strip()
+            return cleaned or None
+        except Exception as e:
+            logger.warning(f"Transcript cleanup failed: {e}")
+            return None
+
     def generate_title(self, summary: str, transcript: str, language: str = "en") -> Optional[str]:
         """
         Generate a short, descriptive meeting title from the summary and transcript.
