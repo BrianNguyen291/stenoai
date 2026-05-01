@@ -193,8 +193,45 @@ class Config:
             "cloud_model": "gpt-4o-mini",
             "anonymous_id": str(uuid.uuid4()),
             "storage_path": "",
+            "transcription_provider": "local",
+            "deepgram_model": "nova-3",
             "version": "1.0"
         }
+
+    # --- Transcription provider settings ---
+
+    VALID_TRANSCRIPTION_PROVIDERS = ("local", "deepgram")
+    DEEPGRAM_MODELS = (
+        "nova-3", "nova-2", "nova", "enhanced", "base",
+        "whisper-large", "whisper-medium", "whisper-small", "whisper-base", "whisper-tiny",
+    )
+
+    def get_transcription_provider(self) -> str:
+        """Get transcription provider ('local' or 'deepgram')."""
+        value = self._config.get("transcription_provider", "local")
+        return value if value in self.VALID_TRANSCRIPTION_PROVIDERS else "local"
+
+    def set_transcription_provider(self, provider: str) -> bool:
+        if provider not in self.VALID_TRANSCRIPTION_PROVIDERS:
+            logger.error(f"Invalid transcription provider: {provider}")
+            return False
+        self._config["transcription_provider"] = provider
+        return self._save()
+
+    def get_deepgram_model(self) -> str:
+        return self._config.get("deepgram_model", "nova-3")
+
+    def set_deepgram_model(self, model: str) -> bool:
+        model = (model or "").strip()
+        if not model:
+            return False
+        self._config["deepgram_model"] = model
+        return self._save()
+
+    def get_deepgram_api_key(self) -> str:
+        """Get Deepgram API key from env (set by Electron via safeStorage)."""
+        import os
+        return os.environ.get("STENOAI_DEEPGRAM_API_KEY", "")
 
     def get_storage_path(self) -> str:
         """Get the custom storage path. Empty string means use default."""

@@ -1006,8 +1006,7 @@ ipcMain.handle('get-status', handleGetStatus);
 
 ipcMain.handle('process-recording', async (event, audioFile, sessionName) => {
   try {
-    const cloudKey = loadCloudApiKey();
-    const env = cloudKey ? { STENOAI_CLOUD_API_KEY: cloudKey } : {};
+    const env = getProcessingEnv();
     const result = await runPythonScript('simple_recorder.py', ['process', audioFile, '--name', sessionName], false, env);
     trackEvent('transcription_completed', { success: true });
     trackEvent('summarization_completed', { success: true });
@@ -1068,8 +1067,8 @@ ipcMain.handle('reprocess-meeting', async (event, summaryFile, regenerateTitle, 
     sendDebugLog(`🔄 Reprocessing meeting: ${summaryFile}`);
     sendDebugLog(`$ stenoai ${args.join(' ')}`);
 
-    const cloudKey = loadCloudApiKey();
-    const reprocessEnv = cloudKey ? { ...require('process').env, STENOAI_CLOUD_API_KEY: cloudKey } : undefined;
+    const procExtraEnv = getProcessingEnv();
+    const reprocessEnv = Object.keys(procExtraEnv).length > 0 ? { ...require('process').env, ...procExtraEnv } : undefined;
 
     await new Promise((resolve, reject) => {
       const proc = spawn(getBackendPath(), args, {
@@ -1154,8 +1153,7 @@ ipcMain.handle('query-transcript', async (event, summaryFile, question) => {
     sendDebugLog(`🤖 Querying transcript: ${question.substring(0, 50)}...`);
 
     // Run the query command (pass cloud key for cloud provider)
-    const cloudKey = loadCloudApiKey();
-    const env = cloudKey ? { STENOAI_CLOUD_API_KEY: cloudKey } : {};
+    const env = getProcessingEnv();
     const result = await runPythonScript('simple_recorder.py', ['query', summaryFile, '-q', question], false, env);
 
     // Parse the JSON response
@@ -1208,8 +1206,8 @@ ipcMain.on('query-cancel', (_event, queryId) => {
 ipcMain.on('query-transcript-stream', (event, queryId, summaryFile, question) => {
   console.log(`[QUERY] IPC received: question="${question.substring(0, 50)}" file="${summaryFile}"`);
   sendDebugLog(`🤖 Streaming query: ${question.substring(0, 50)}...`);
-  const cloudKey = loadCloudApiKey();
-  const env = cloudKey ? { ...process.env, STENOAI_CLOUD_API_KEY: cloudKey } : process.env;
+  const procExtra = getProcessingEnv();
+  const env = Object.keys(procExtra).length > 0 ? { ...process.env, ...procExtra } : process.env;
 
   let proc;
   try {
@@ -1499,8 +1497,8 @@ async function processNextInQueue() {
   console.log(`🔄 Processing queued job: ${currentProcessingJob.sessionName}`);
   
   try {
-    const queueCloudKey = loadCloudApiKey();
-    const queueEnv = queueCloudKey ? { ...require('process').env, STENOAI_CLOUD_API_KEY: queueCloudKey } : undefined;
+    const queueExtra = getProcessingEnv();
+    const queueEnv = Object.keys(queueExtra).length > 0 ? { ...require('process').env, ...queueExtra } : undefined;
     const processArgs = ['process-streaming', currentProcessingJob.audioFile, '--name', currentProcessingJob.sessionName];
     if (currentProcessingJob.notesFile && fs.existsSync(currentProcessingJob.notesFile)) {
       processArgs.push('--notes', currentProcessingJob.notesFile);
@@ -1635,9 +1633,7 @@ ipcMain.handle('start-recording-ui', async (_, sessionName) => {
 
     // Start background recording with 2-hour limit
     // Pass cloud API key via env var for cloud summarization
-    const recordEnv = {};
-    const cloudKey = loadCloudApiKey();
-    if (cloudKey) recordEnv.STENOAI_CLOUD_API_KEY = cloudKey;
+    const recordEnv = getProcessingEnv();
 
     currentRecordingProcess = spawn(getBackendPath(), ['record', '7200', actualSessionName], {
       cwd: getBackendCwd(),
@@ -3115,6 +3111,64 @@ function hasCloudApiKey() {
   return fs.existsSync(getCloudKeyPath());
 }
 
+function getDeepgramKeyPath() {
+  return path.join(os.homedir(), 'Library', 'Application Support', 'stenoai', '.deepgram-api-key');
+}
+
+function saveDeepgramApiKey(key) {
+  try {
+    const keyDir = path.dirname(getDeepgramKeyPath());
+    if (!fs.existsSync(keyDir)) {
+      fs.mkdirSync(keyDir, { recursive: true });
+    }
+    const encrypted = safeStorage.encryptString(key);
+    fs.writeFileSync(getDeepgramKeyPath(), encrypted);
+    return true;
+  } catch (error) {
+    console.error('Failed to save Deepgram API key:', error.message);
+    return false;
+  }
+}
+
+function loadDeepgramApiKey() {
+  try {
+    const keyPath = getDeepgramKeyPath();
+    if (!fs.existsSync(keyPath)) return null;
+    const encrypted = fs.readFileSync(keyPath);
+    return safeStorage.decryptString(encrypted);
+  } catch (error) {
+    console.error('Failed to load Deepgram API key:', error.message);
+    return null;
+  }
+}
+
+function hasDeepgramApiKey() {
+  return fs.existsSync(getDeepgramKeyPath());
+}
+
+function deleteDeepgramApiKey() {
+  try {
+    const keyPath = getDeepgramKeyPath();
+    if (fs.existsSync(keyPath)) fs.unlinkSync(keyPath);
+    return true;
+  } catch (error) {
+    console.error('Failed to delete Deepgram API key:', error.message);
+    return false;
+  }
+}
+
+// Combined env for any subprocess that may transcribe or summarise.
+// Returns a partial env (extraEnv-style) suitable for runPythonScript,
+// or merge into process.env at the call site.
+function getProcessingEnv() {
+  const env = {};
+  const cloudKey = loadCloudApiKey();
+  if (cloudKey) env.STENOAI_CLOUD_API_KEY = cloudKey;
+  const dgKey = loadDeepgramApiKey();
+  if (dgKey) env.STENOAI_DEEPGRAM_API_KEY = dgKey;
+  return env;
+}
+
 ipcMain.handle('get-ai-provider', async () => {
   try {
     const result = await runPythonScript('simple_recorder.py', ['get-ai-provider'], true);
@@ -3222,18 +3276,82 @@ ipcMain.handle('test-cloud-api', async () => {
   }
 });
 
+// ---- Transcription provider (Deepgram) IPC handlers ----
+
+ipcMain.handle('get-transcription-provider', async () => {
+  try {
+    const result = await runPythonScript('simple_recorder.py', ['get-transcription-provider'], true);
+    const jsonData = JSON.parse(result.trim());
+    jsonData.deepgram_api_key_set = hasDeepgramApiKey();
+    return { success: true, ...jsonData };
+  } catch (error) {
+    sendDebugLog(`Error getting transcription provider: ${error.message}`);
+    return { success: false, error: error.message };
+  }
+});
+
+ipcMain.handle('set-transcription-provider', async (event, provider) => {
+  try {
+    sendDebugLog(`Setting transcription provider to: ${provider}`);
+    const result = await runPythonScript('simple_recorder.py', ['set-transcription-provider', provider]);
+    const jsonMatch = result.match(/\{.*\}/s);
+    if (jsonMatch) return JSON.parse(jsonMatch[0]);
+    return { success: true, transcription_provider: provider };
+  } catch (error) {
+    return { success: false, error: error.message };
+  }
+});
+
+ipcMain.handle('set-deepgram-model', async (event, model) => {
+  try {
+    const result = await runPythonScript('simple_recorder.py', ['set-deepgram-model', model]);
+    const jsonMatch = result.match(/\{.*\}/s);
+    if (jsonMatch) return JSON.parse(jsonMatch[0]);
+    return { success: true };
+  } catch (error) {
+    return { success: false, error: error.message };
+  }
+});
+
+ipcMain.handle('set-deepgram-api-key', async (event, key) => {
+  try {
+    if (!key) {
+      const ok = deleteDeepgramApiKey();
+      return { success: ok, deepgram_api_key_set: false };
+    }
+    const saved = saveDeepgramApiKey(key);
+    return { success: saved, deepgram_api_key_set: saved };
+  } catch (error) {
+    return { success: false, error: error.message };
+  }
+});
+
+ipcMain.handle('test-deepgram', async () => {
+  try {
+    sendDebugLog('Testing Deepgram API key...');
+    const apiKey = loadDeepgramApiKey();
+    const env = apiKey ? { STENOAI_DEEPGRAM_API_KEY: apiKey } : {};
+    const result = await runPythonScript('simple_recorder.py', ['test-deepgram'], false, env);
+    const jsonMatch = result.match(/\{.*\}/s);
+    if (jsonMatch) return JSON.parse(jsonMatch[0]);
+    return { success: false, error: 'No response' };
+  } catch (error) {
+    sendDebugLog(`Deepgram test failed: ${error.message}`);
+    return { success: false, error: error.message };
+  }
+});
+
 ipcMain.handle('upload-and-process', async () => {
   try {
     const pickResult = await dialog.showOpenDialog(mainWindow, {
-      properties: ['openFile'],
+      properties: ['openFile', 'multiSelections'],
       filters: [{ name: 'Audio Files', extensions: ['wav', 'mp3', 'm4a', 'aac', 'webm', 'flac', 'ogg'] }]
     });
     if (pickResult.canceled || !pickResult.filePaths.length) {
       return { success: false, error: 'No file selected' };
     }
-    const sourcePath = pickResult.filePaths[0];
 
-    // Resolve recordings dir (same logic as get-recordings-dir)
+    // Resolve recordings dir once for all selected files
     const cfgRaw = await runPythonScript('simple_recorder.py', ['get-storage-path'], true);
     const cfg = JSON.parse(cfgRaw.trim());
     let recordingsDir;
@@ -3246,17 +3364,22 @@ ipcMain.handle('upload-and-process', async () => {
     }
     if (!fs.existsSync(recordingsDir)) fs.mkdirSync(recordingsDir, { recursive: true });
 
-    // Copy with timestamped filename to avoid collisions
-    const ext = path.extname(sourcePath) || '.wav';
-    const ts = new Date().toISOString().replace(/[-:T]/g, '').split('.')[0];
-    const baseName = path.basename(sourcePath, ext).replace(/[^a-zA-Z0-9_-]/g, '_').slice(0, 40);
-    const destName = `Upload_${ts}_${baseName}${ext}`;
-    const destPath = path.join(recordingsDir, destName);
-    fs.copyFileSync(sourcePath, destPath);
+    const enqueued = [];
+    for (const sourcePath of pickResult.filePaths) {
+      const ext = path.extname(sourcePath) || '.wav';
+      const ts = new Date().toISOString().replace(/[-:T]/g, '').split('.')[0];
+      const baseName = path.basename(sourcePath, ext).replace(/[^a-zA-Z0-9_-]/g, '_').slice(0, 40);
+      // Suffix avoids same-second filename collisions when batching
+      const suffix = pickResult.filePaths.length > 1 ? `_${enqueued.length + 1}` : '';
+      const destName = `Upload_${ts}${suffix}_${baseName}${ext}`;
+      const destPath = path.join(recordingsDir, destName);
+      fs.copyFileSync(sourcePath, destPath);
 
-    const sessionName = `Meeting-${Math.random().toString(36).slice(2, 8).toUpperCase()}`;
-    addToProcessingQueue(destPath, sessionName, null);
-    return { success: true, audioFile: destPath, sessionName };
+      const sessionName = `Meeting-${Math.random().toString(36).slice(2, 8).toUpperCase()}`;
+      addToProcessingQueue(destPath, sessionName, null);
+      enqueued.push({ audioFile: destPath, sessionName });
+    }
+    return { success: true, count: enqueued.length, items: enqueued };
   } catch (error) {
     sendDebugLog(`Upload failed: ${error.message}`);
     return { success: false, error: error.message };

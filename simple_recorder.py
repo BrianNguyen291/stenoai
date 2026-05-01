@@ -33,9 +33,14 @@ except ImportError:
     AudioRecorder = None
 
 try:
-    from src.transcriber import WhisperTranscriber  
+    from src.transcriber import WhisperTranscriber
 except ImportError:
     WhisperTranscriber = None
+
+try:
+    from src.transcriber import DeepgramTranscriber
+except ImportError:
+    DeepgramTranscriber = None
     
 try:
     from src.summarizer import OllamaSummarizer
@@ -257,11 +262,7 @@ class SimpleRecorder:
 
         print(f"📝 Transcribing: {audio_path.name}")
 
-        # Initialize transcriber only when needed
-        if self.transcriber is None:
-            self.transcriber = WhisperTranscriber()
-
-        # Get configured language
+        # Get configured language + provider
         from src.config import get_config
         from src.chinese import apply_variant
         config = get_config()
@@ -269,9 +270,35 @@ class SimpleRecorder:
         # whisper.cpp only knows "zh"; map zh-Hans/zh-Hant before invoking
         whisper_language = config.get_whisper_language()
         chinese_variant = config.get_chinese_variant()
+        provider = config.get_transcription_provider()
 
-        # Transcribe with diarisation support (stereo → [You]/[Others])
-        transcript_result = self.transcriber.transcribe_diarised(audio_path, language=whisper_language)
+        # Initialize transcriber only when needed
+        print(f"[transcribe] provider={provider}", file=sys.stderr, flush=True)
+        if provider == "deepgram":
+            api_key = config.get_deepgram_api_key()
+            print(
+                f"[transcribe] deepgram model={config.get_deepgram_model()} "
+                f"key_set={bool(api_key)} language={configured_language}",
+                file=sys.stderr, flush=True,
+            )
+            if not api_key:
+                raise RuntimeError(
+                    "Deepgram provider selected but STENOAI_DEEPGRAM_API_KEY is not set. "
+                    "Configure your API key in Settings."
+                )
+            if DeepgramTranscriber is None:
+                raise RuntimeError("DeepgramTranscriber module not available")
+            self.transcriber = DeepgramTranscriber(api_key, model=config.get_deepgram_model())
+            # Deepgram accepts the configured UI language (zh-Hans/zh-Hant) directly
+            transcribe_language = configured_language
+        else:
+            print(f"[transcribe] local whisper language={whisper_language}", file=sys.stderr, flush=True)
+            if self.transcriber is None or not isinstance(self.transcriber, WhisperTranscriber):
+                self.transcriber = WhisperTranscriber()
+            transcribe_language = whisper_language
+
+        # Transcribe with diarisation support
+        transcript_result = self.transcriber.transcribe_diarised(audio_path, language=transcribe_language)
 
         # Convert Chinese variant if user picked Traditional (whisper outputs simplified)
         if chinese_variant and isinstance(transcript_result, dict):
@@ -2528,6 +2555,77 @@ def test_cloud_api():
             models = client.models.list()
             model_ids = [m.id for m in models.data[:10]]
             print(json.dumps({"success": True, "models": model_ids}))
+    except Exception as e:
+        print(json.dumps({"success": False, "error": str(e)}))
+
+
+@cli.command()
+def get_transcription_provider():
+    """Get transcription provider configuration."""
+    from src.config import get_config
+    config = get_config()
+    print(json.dumps({
+        "transcription_provider": config.get_transcription_provider(),
+        "deepgram_model": config.get_deepgram_model(),
+        "deepgram_api_key_set": bool(config.get_deepgram_api_key()),
+        "deepgram_models": list(config.DEEPGRAM_MODELS),
+    }))
+
+
+@cli.command()
+@click.argument('provider')
+def set_transcription_provider(provider):
+    """Set transcription provider (local or deepgram)."""
+    from src.config import get_config
+    config = get_config()
+    if provider not in config.VALID_TRANSCRIPTION_PROVIDERS:
+        print(json.dumps({
+            "success": False,
+            "error": f"Invalid provider: {provider}. Must be one of: {', '.join(config.VALID_TRANSCRIPTION_PROVIDERS)}"
+        }))
+        return
+    success = config.set_transcription_provider(provider)
+    print(json.dumps({"success": success, "transcription_provider": provider}))
+
+
+@cli.command()
+@click.argument('model')
+def set_deepgram_model(model):
+    """Set Deepgram model (e.g. nova-3)."""
+    from src.config import get_config
+    config = get_config()
+    success = config.set_deepgram_model(model)
+    print(json.dumps({"success": success, "deepgram_model": model}))
+
+
+@cli.command()
+def test_deepgram():
+    """Test Deepgram API key by hitting the projects endpoint."""
+    from src.config import get_config
+    config = get_config()
+    api_key = config.get_deepgram_api_key()
+    if not api_key:
+        print(json.dumps({"success": False, "error": "No Deepgram API key configured"}))
+        return
+    try:
+        import urllib.request
+        import urllib.error
+        req = urllib.request.Request(
+            "https://api.deepgram.com/v1/projects",
+            headers={"Authorization": f"Token {api_key}"},
+        )
+        with urllib.request.urlopen(req, timeout=15) as resp:
+            body = resp.read().decode("utf-8")
+            data = json.loads(body) if body else {}
+            project_count = len(data.get("projects", []))
+            print(json.dumps({"success": True, "projects": project_count, "model": config.get_deepgram_model()}))
+    except urllib.error.HTTPError as e:
+        err = ""
+        try:
+            err = e.read().decode("utf-8")
+        except Exception:
+            pass
+        print(json.dumps({"success": False, "error": f"HTTP {e.code}: {err or e.reason}"}))
     except Exception as e:
         print(json.dumps({"success": False, "error": str(e)}))
 

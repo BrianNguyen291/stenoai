@@ -11,6 +11,7 @@ whisper.cpp is preferred as it's 10x smaller and 2-4x faster.
 import logging
 import os
 import subprocess
+import sys
 import tempfile
 from pathlib import Path
 from typing import Optional, Tuple
@@ -685,3 +686,267 @@ class WhisperTranscriber:
             "whisper_cpp_available": WHISPER_CPP_AVAILABLE,
             "openai_whisper_available": OPENAI_WHISPER_AVAILABLE,
         }
+
+
+class DeepgramTranscriber:
+    """Cloud transcription via Deepgram REST API.
+
+    Implements the same public surface as WhisperTranscriber so callers can
+    swap providers without further changes:
+        - transcribe_audio(audio_filepath, language) -> dict
+        - transcribe_diarised(audio_filepath, language) -> dict
+    """
+
+    API_URL = "https://api.deepgram.com/v1/listen"
+    # Deepgram language codes mostly match ISO 639-1; map UI codes that differ.
+    _LANG_MAP = {
+        "zh-Hans": "zh-CN",
+        "zh-Hant": "zh-TW",
+        "zh": "zh",
+    }
+
+    def __init__(self, api_key: str, model: str = "nova-3"):
+        if not api_key:
+            raise ValueError("Deepgram API key is required")
+        self.api_key = api_key
+        self.model = model or "nova-3"
+        self.backend = f"deepgram:{self.model}"
+
+    def _map_language(self, language: str) -> Optional[str]:
+        if not language or language == "auto":
+            return None
+        return self._LANG_MAP.get(language, language)
+
+    def _content_type(self, path: Path) -> str:
+        ext = path.suffix.lower().lstrip(".")
+        return {
+            "wav": "audio/wav",
+            "mp3": "audio/mpeg",
+            "m4a": "audio/mp4",
+            "aac": "audio/aac",
+            "flac": "audio/flac",
+            "ogg": "audio/ogg",
+            "webm": "audio/webm",
+        }.get(ext, "application/octet-stream")
+
+    def _request(self, audio_filepath: Path, language: str, diarize: bool) -> Optional[dict]:
+        import urllib.request
+        import urllib.parse
+        import urllib.error
+        import json as _json
+
+        is_whisper = self.model.startswith("whisper")
+        params = {"model": self.model}
+        # Deepgram's hosted Whisper does NOT support smart_format / punctuate /
+        # diarize / detect_language — only model + language. Nova family supports all.
+        if not is_whisper:
+            params["punctuate"] = "true"
+            params["smart_format"] = "true"
+            if diarize:
+                params["diarize"] = "true"
+        mapped = self._map_language(language)
+        if mapped:
+            params["language"] = mapped
+        elif not is_whisper:
+            params["detect_language"] = "true"
+
+        url = f"{self.API_URL}?{urllib.parse.urlencode(params)}"
+
+        try:
+            data = audio_filepath.read_bytes()
+        except Exception as e:
+            logger.error(f"Failed to read audio file: {e}")
+            print(f"[deepgram] ERROR reading file: {e}", file=sys.stderr, flush=True)
+            return None
+
+        size_kb = len(data) / 1024.0
+        ctype = self._content_type(audio_filepath)
+        print(
+            f"[deepgram] POST {url} ({size_kb:.1f}KB, {ctype})",
+            file=sys.stderr, flush=True,
+        )
+
+        req = urllib.request.Request(
+            url,
+            data=data,
+            method="POST",
+            headers={
+                "Authorization": f"Token {self.api_key}",
+                "Content-Type": ctype,
+            },
+        )
+
+        import time as _time
+        t0 = _time.monotonic()
+        try:
+            with urllib.request.urlopen(req, timeout=600) as resp:
+                body = resp.read().decode("utf-8")
+                elapsed = _time.monotonic() - t0
+                print(
+                    f"[deepgram] HTTP {resp.status} in {elapsed:.1f}s ({len(body)} bytes)",
+                    file=sys.stderr, flush=True,
+                )
+                return _json.loads(body)
+        except urllib.error.HTTPError as e:
+            err_body = ""
+            try:
+                err_body = e.read().decode("utf-8")
+            except Exception:
+                pass
+            elapsed = _time.monotonic() - t0
+            logger.error(f"Deepgram HTTP {e.code}: {err_body}")
+            print(
+                f"[deepgram] HTTP ERROR {e.code} in {elapsed:.1f}s: {err_body[:300]}",
+                file=sys.stderr, flush=True,
+            )
+            return None
+        except Exception as e:
+            elapsed = _time.monotonic() - t0
+            logger.error(f"Deepgram request failed: {e}")
+            print(f"[deepgram] REQUEST FAILED in {elapsed:.1f}s: {e}", file=sys.stderr, flush=True)
+            return None
+
+    @staticmethod
+    def _audio_duration(payload: dict) -> Optional[float]:
+        try:
+            return float(payload.get("metadata", {}).get("duration"))
+        except (TypeError, ValueError):
+            return None
+
+    @staticmethod
+    def _first_alt(payload: dict) -> Optional[dict]:
+        results = payload.get("results", {})
+        channels = results.get("channels") or []
+        if not channels:
+            return None
+        alts = channels[0].get("alternatives") or []
+        return alts[0] if alts else None
+
+    @staticmethod
+    def _detected_language(payload: dict) -> Tuple[Optional[str], Optional[float]]:
+        results = payload.get("results", {})
+        channels = results.get("channels") or []
+        if not channels:
+            return None, None
+        ch = channels[0]
+        lang = ch.get("detected_language")
+        conf = ch.get("language_confidence")
+        try:
+            conf = float(conf) if conf is not None else None
+        except (TypeError, ValueError):
+            conf = None
+        return lang, conf
+
+    def transcribe_audio(self, audio_filepath: Path, language: str = "en") -> Optional[dict]:
+        if not audio_filepath.exists():
+            logger.error(f"Audio file not found: {audio_filepath}")
+            return None
+
+        logger.info(f"Transcribing via Deepgram: {audio_filepath} (model={self.model})")
+        payload = self._request(audio_filepath, language, diarize=False)
+        if payload is None:
+            return None
+
+        alt = self._first_alt(payload) or {}
+        text = (alt.get("transcript") or "").strip()
+        if not text:
+            text = "No speech detected in audio"
+
+        detected_language, detected_conf = self._detected_language(payload)
+        duration = self._audio_duration(payload)
+
+        segments = []
+        for w in alt.get("words", []) or []:
+            segments.append({
+                "text": w.get("punctuated_word") or w.get("word") or "",
+                "start": float(w.get("start", 0.0) or 0.0),
+                "end": float(w.get("end", 0.0) or 0.0),
+            })
+
+        return {
+            "text": text,
+            "segments": segments,
+            "duration_seconds": duration,
+            "detected_language": detected_language,
+            "detected_language_probability": detected_conf,
+        }
+
+    def transcribe_diarised(self, audio_filepath: Path, language: str = "en") -> Optional[dict]:
+        """Diarised transcription using Deepgram's native speaker labels."""
+        if not audio_filepath.exists():
+            logger.error(f"Audio file not found: {audio_filepath}")
+            return None
+
+        logger.info(f"Transcribing (diarised) via Deepgram: {audio_filepath}")
+        payload = self._request(audio_filepath, language, diarize=True)
+        if payload is None:
+            return None
+
+        alt = self._first_alt(payload) or {}
+        plain_text = (alt.get("transcript") or "").strip()
+        words = alt.get("words") or []
+
+        detected_language, detected_conf = self._detected_language(payload)
+        duration = self._audio_duration(payload)
+
+        # Group consecutive words with same speaker into utterances.
+        utterances = []
+        current = None
+        for w in words:
+            speaker = w.get("speaker")
+            token = w.get("punctuated_word") or w.get("word") or ""
+            start = float(w.get("start", 0.0) or 0.0)
+            end = float(w.get("end", start) or start)
+            if current is None or speaker != current["speaker"]:
+                if current is not None:
+                    utterances.append(current)
+                current = {"speaker": speaker, "start": start, "end": end, "tokens": [token]}
+            else:
+                current["tokens"].append(token)
+                current["end"] = end
+        if current is not None:
+            utterances.append(current)
+
+        speakers = {u["speaker"] for u in utterances if u["speaker"] is not None}
+        is_diarised = len(speakers) >= 2
+
+        def _fmt_ts(seconds: float) -> str:
+            seconds = max(0, int(seconds))
+            mm, ss = divmod(seconds, 60)
+            return f"[{mm:02d}:{ss:02d}]"
+
+        labelled_lines = []
+        for u in utterances:
+            text = " ".join(t for t in u["tokens"] if t).strip()
+            if not text:
+                continue
+            ts = _fmt_ts(u["start"])
+            if is_diarised and u["speaker"] is not None:
+                labelled_lines.append(f"{ts} [Speaker {u['speaker']}] {text}")
+            else:
+                labelled_lines.append(f"{ts} {text}")
+
+        diarised_text = "\n".join(labelled_lines) if labelled_lines else None
+
+        if not plain_text:
+            plain_text = "No speech detected in audio"
+
+        return {
+            "text": plain_text,
+            "diarised_text": diarised_text,
+            "is_diarised": is_diarised,
+            "duration_seconds": duration,
+            "detected_language": detected_language,
+            "detected_language_probability": detected_conf,
+            "segments": [
+                {
+                    "text": w.get("punctuated_word") or w.get("word") or "",
+                    "start": float(w.get("start", 0.0) or 0.0),
+                    "end": float(w.get("end", 0.0) or 0.0),
+                }
+                for w in words
+            ],
+        }
+
+    def get_backend_info(self) -> dict:
+        return {"backend": self.backend, "model": self.model}
