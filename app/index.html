@@ -4201,6 +4201,10 @@
                 <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="7 10 12 15 17 10"></polyline><line x1="12" y1="15" x2="12" y2="3"></line></svg>
                 <span id="update-badge-text">Restart to update</span>
             </button>
+            <button class="new-note-btn" id="upload-audio-btn" title="Upload an audio file to transcribe and summarize">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="17 8 12 3 7 8"></polyline><line x1="12" y1="3" x2="12" y2="15"></line></svg>
+                Upload Audio
+            </button>
             <button class="new-note-btn" id="new-note-btn" title="Start a new recording">
                 <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line></svg>
                 New Note
@@ -4396,40 +4400,50 @@ Ask Steno
                     </div>
                 </div>
 
-                <div class="meeting-section">
+                <!-- Tabs: Summary / Transcript -->
+                <div id="detail-tabs" style="display:flex;gap:4px;border-bottom:1px solid var(--border-subtle,#2a2a2e);margin:8px 0 18px;padding:0 0 0 0;">
+                    <button class="detail-tab active" data-tab="summary" style="background:none;border:none;border-bottom:2px solid var(--accent-primary,#818cf8);color:var(--text-primary);padding:8px 14px;font-size:13px;font-weight:600;cursor:pointer;">Summary</button>
+                    <button class="detail-tab" data-tab="transcript" style="background:none;border:none;border-bottom:2px solid transparent;color:var(--text-secondary);padding:8px 14px;font-size:13px;font-weight:500;cursor:pointer;">Transcript</button>
+                </div>
+
+                <div class="meeting-section" data-tab="summary">
                     <h2 class="section-title">Summary</h2>
                     <div class="section-content" id="detail-summary">
                         Meeting summary will appear here...
                     </div>
                 </div>
 
-                <div class="meeting-section permanently-hidden">
+                <div class="meeting-section permanently-hidden" data-tab="summary">
                     <h2 class="section-title">Participants</h2>
                     <div class="section-content" id="detail-participants"></div>
                 </div>
 
-                <div class="meeting-section" id="discussion-areas-section">
+                <div class="meeting-section" id="discussion-areas-section" data-tab="summary">
                     <h2 class="section-title">Key Topics</h2>
                     <div class="discussion-areas-container" id="detail-discussion-areas">
                         <!-- Key topics will be loaded here -->
                     </div>
                 </div>
 
-                <div class="meeting-section">
+                <div class="meeting-section" data-tab="summary">
                     <h2 class="section-title">Key Points</h2>
                     <ul class="key-points-list" id="detail-key-points">
                         <!-- Key points will be loaded here -->
                     </ul>
                 </div>
 
-                <div class="meeting-section">
+                <div class="meeting-section" data-tab="summary">
                     <h2 class="section-title">Action Items</h2>
                     <ul class="action-items-list" id="detail-action-items">
                         <!-- Action items will be loaded here -->
                     </ul>
                 </div>
 
-                <div class="meeting-section" id="transcript-section">
+                <div class="meeting-section" data-tab="transcript" id="audio-player-section" style="display:none;">
+                    <audio id="meeting-audio-player" controls preload="metadata" style="width:100%;border-radius:8px;"></audio>
+                </div>
+
+                <div class="meeting-section" id="transcript-section" data-tab="transcript">
                     <h2 class="section-title">Full Transcript</h2>
                     <div class="transcript-container">
                         <div class="transcript-content" id="detail-transcript">
@@ -5215,6 +5229,30 @@ Session started - waiting for activity...
         const stopBtn = document.getElementById('stop-btn');
         const pauseBtn = document.getElementById('pause-btn');
         const newNoteBtn = document.getElementById('new-note-btn');
+        const uploadAudioBtn = document.getElementById('upload-audio-btn');
+        if (uploadAudioBtn) {
+            uploadAudioBtn.addEventListener('click', async () => {
+                uploadAudioBtn.disabled = true;
+                const original = uploadAudioBtn.innerHTML;
+                uploadAudioBtn.innerHTML = '<span style="opacity:0.7">Uploading...</span>';
+                try {
+                    const res = await ipcRenderer.invoke('upload-and-process');
+                    if (!res || !res.success) {
+                        if (res && res.error && res.error !== 'No file selected') {
+                            alert(`Upload failed: ${res.error}`);
+                        }
+                    } else {
+                        // Trigger meetings list refresh; processing happens in background queue
+                        if (typeof loadMeetings === 'function') loadMeetings();
+                    }
+                } catch (e) {
+                    alert(`Upload failed: ${e.message}`);
+                } finally {
+                    uploadAudioBtn.disabled = false;
+                    uploadAudioBtn.innerHTML = original;
+                }
+            });
+        }
         const barPauseBtn = document.getElementById('bar-pause-btn');
         const barStopBtn = document.getElementById('bar-stop-btn');
         const barRecControls = document.getElementById('ask-bar-rec-controls');
@@ -6212,6 +6250,47 @@ Session started - waiting for activity...
             });
         }
         
+        // Tab switching for meeting detail view (Summary | Transcript)
+        function switchDetailTab(tabName) {
+            document.querySelectorAll('#detail-tabs .detail-tab').forEach(btn => {
+                const active = btn.dataset.tab === tabName;
+                btn.classList.toggle('active', active);
+                btn.style.borderBottomColor = active ? 'var(--accent-primary, #818cf8)' : 'transparent';
+                btn.style.color = active ? 'var(--text-primary)' : 'var(--text-secondary)';
+                btn.style.fontWeight = active ? '600' : '500';
+            });
+            document.querySelectorAll('#meeting-detail [data-tab]').forEach(section => {
+                if (section.classList.contains('detail-tab')) return;
+                if (section.classList.contains('permanently-hidden')) return;
+                const matches = section.dataset.tab === tabName;
+                // Audio player section has its own visibility logic — only hide when off-tab
+                if (section.id === 'audio-player-section') {
+                    if (!matches) section.style.display = 'none';
+                    // Don't force show — onMeeting select decides whether file exists
+                    return;
+                }
+                section.style.display = matches ? '' : 'none';
+            });
+            // Hide streaming output and notes editor when on Transcript tab — they belong to Summary
+            const streamingOut = document.getElementById('streaming-output');
+            const notesEditor = document.getElementById('notes-editor');
+            if (tabName === 'transcript') {
+                if (streamingOut) streamingOut.dataset.prevDisplay = streamingOut.style.display, streamingOut.style.display = 'none';
+                if (notesEditor) notesEditor.dataset.prevDisplay = notesEditor.style.display, notesEditor.style.display = 'none';
+            } else {
+                if (streamingOut && streamingOut.dataset.prevDisplay !== undefined) streamingOut.style.display = streamingOut.dataset.prevDisplay;
+                if (notesEditor && notesEditor.dataset.prevDisplay !== undefined) notesEditor.style.display = notesEditor.dataset.prevDisplay;
+            }
+            if (tabName === 'transcript') {
+                const audioSection = document.getElementById('audio-player-section');
+                const audioEl = document.getElementById('meeting-audio-player');
+                if (audioSection && audioEl && audioEl.src) audioSection.style.display = '';
+            }
+        }
+        document.querySelectorAll('#detail-tabs .detail-tab').forEach(btn => {
+            btn.addEventListener('click', () => switchDetailTab(btn.dataset.tab));
+        });
+
         // Populate the detail-transcript element with meeting transcript data
         function populateTranscript(meeting) {
             if (!meeting) return;
@@ -6320,6 +6399,25 @@ Session started - waiting for activity...
             emptyState.style.display = 'none';
             meetingDetail.classList.add('show');
             
+            // Reset to Summary tab on each open
+            switchDetailTab('summary');
+
+            // Wire audio player to recording's audio file (if it exists on disk)
+            try {
+                const audioEl = document.getElementById('meeting-audio-player');
+                const audioSection = document.getElementById('audio-player-section');
+                const audioFile = selectedMeeting.session_info?.audio_file;
+                if (audioEl && audioSection) {
+                    if (audioFile && require('fs').existsSync(audioFile)) {
+                        audioEl.src = `file://${audioFile}`;
+                        audioSection.style.display = '';
+                    } else {
+                        audioEl.removeAttribute('src');
+                        audioSection.style.display = 'none';
+                    }
+                }
+            } catch (e) { /* fs/audio wiring failures are non-fatal */ }
+
             // Populate details
             detailTitle.textContent = selectedMeeting.session_info?.name || 'Untitled Meeting';
             detailDate.textContent = formatDate(selectedMeeting.session_info?.processed_at);
@@ -9281,9 +9379,43 @@ Session started - waiting for activity...
             // should NOT replace it with the old section-based layout.
         });
 
+        // Lightweight toast for upload/queue processing visibility
+        function showProcessingToast(message) {
+            let el = document.getElementById('upload-processing-toast');
+            if (!el) {
+                el = document.createElement('div');
+                el.id = 'upload-processing-toast';
+                el.style.cssText = 'position:fixed;top:60px;right:24px;z-index:9999;background:var(--bg-elevated,#1f1f23);color:var(--text-primary,#fff);border:1px solid var(--border-subtle,#333);border-radius:8px;padding:12px 16px;font-size:13px;box-shadow:0 4px 16px rgba(0,0,0,0.3);display:flex;align-items:center;gap:10px;max-width:320px;';
+                el.innerHTML = '<div class="upload-toast-spinner" style="width:14px;height:14px;border:2px solid #555;border-top-color:#818cf8;border-radius:50%;animation:upload-toast-spin 0.8s linear infinite;flex-shrink:0;"></div><span class="upload-toast-msg"></span>';
+                if (!document.getElementById('upload-toast-style')) {
+                    const style = document.createElement('style');
+                    style.id = 'upload-toast-style';
+                    style.textContent = '@keyframes upload-toast-spin{to{transform:rotate(360deg);}}';
+                    document.head.appendChild(style);
+                }
+                document.body.appendChild(el);
+            }
+            el.querySelector('.upload-toast-msg').textContent = message;
+            el.style.display = 'flex';
+        }
+        function hideProcessingToast() {
+            const el = document.getElementById('upload-processing-toast');
+            if (el) el.style.display = 'none';
+        }
+        ipcRenderer.on('processing-started', (event, data) => {
+            showProcessingToast(`Processing ${data.sessionName}...`);
+        });
+        ipcRenderer.on('summary-chunk', (event, data) => {
+            const el = document.getElementById('upload-processing-toast');
+            if (el && el.style.display !== 'none') {
+                el.querySelector('.upload-toast-msg').textContent = `Summarizing ${data.sessionName}...`;
+            }
+        });
+
         ipcRenderer.on('processing-complete', (event, data) => {
             log(`Processing complete for: ${data.sessionName}`);
             processingMeetings.delete(data.sessionName);
+            hideProcessingToast();
 
             if (data.success) {
                 const wasStreaming = document.getElementById('notes-editor').style.display === 'block';

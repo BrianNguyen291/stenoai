@@ -682,12 +682,19 @@ Return ONLY the response in this exact JSON format:
     
     def _create_markdown_prompt(self, transcript: str, language: str = "en", notes: str = None) -> str:
         """Create a prompt that asks the LLM to output markdown directly."""
-        # Language instruction
+        # Language instruction — front-load AND repeat at the end; small models often
+        # forget mid-prompt language constraints when transcript itself is in target language.
         if language and language not in ("en", "auto"):
             from .config import get_config
             language_name = get_config().get_language_name(language)
             if language_name != "Unknown":
-                language_instruction = f"\n\nCRITICAL: Write the entire output in {language_name}."
+                language_instruction = (
+                    f"\n\nCRITICAL LANGUAGE RULE: The ENTIRE response (every heading, "
+                    f"every bullet, every word) MUST be written in {language_name}. "
+                    f"Do NOT translate to English under any circumstances. "
+                    f"If the transcript is in {language_name}, keep your output in {language_name}. "
+                    f"If you write a single word in English you have failed the task."
+                )
             else:
                 language_instruction = ""
         else:
@@ -703,7 +710,15 @@ Return ONLY the response in this exact JSON format:
         if notes and notes.strip():
             notes_context = f"USER NOTES (written during the meeting):\n{notes.strip()}\n\n"
 
-        return f"""{diarisation_note}{notes_context}Summarise this meeting transcript as markdown. Output ONLY the markdown below with no preamble, commentary, or explanation. Start directly with ## Summary.
+        # Build front-loaded language preamble (most reliable for small models)
+        lang_preamble = ""
+        if language and language not in ("en", "auto"):
+            from .config import get_config
+            language_name = get_config().get_language_name(language)
+            if language_name != "Unknown":
+                lang_preamble = f"OUTPUT LANGUAGE: {language_name}. Every word of your response must be in {language_name}.\n\n"
+
+        return f"""{lang_preamble}{diarisation_note}{notes_context}Summarise this meeting transcript as markdown. Output ONLY the markdown below with no preamble, commentary, or explanation. Start directly with ## Summary.
 
 ## Summary
 A 1-3 sentence overview of what was discussed.

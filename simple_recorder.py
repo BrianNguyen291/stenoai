@@ -159,8 +159,14 @@ class SimpleRecorder:
         if current_topic_title:
             discussion_areas.append({"title": current_topic_title, "analysis": '\n'.join(current_topic_lines).strip()})
 
+        summary_text = ' '.join(summary_parts)
+        # Fallback: if model ignored the template (no `## Summary` heading found),
+        # dump full output into summary so the user sees something instead of empty UI
+        if not summary_text and not discussion_areas and not key_points and not action_items:
+            summary_text = md_text.strip()
+
         return {
-            "summary": ' '.join(summary_parts),
+            "summary": summary_text,
             "participants": participants,
             "discussion_areas": discussion_areas,
             "key_points": key_points,

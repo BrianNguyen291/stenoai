@@ -1609,6 +1609,13 @@ async function processNextInQueue() {
 function addToProcessingQueue(audioFile, sessionName, notesFile) {
   processingQueue.push({ audioFile, sessionName, notesFile });
   console.log(`📋 Added to processing queue: ${sessionName} (Queue size: ${processingQueue.length})`);
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.webContents.send('processing-started', {
+      sessionName,
+      audioFile,
+      queueSize: processingQueue.length,
+    });
+  }
   processNextInQueue();
 }
 
@@ -3211,6 +3218,47 @@ ipcMain.handle('test-cloud-api', async () => {
     return { success: false, error: 'No response' };
   } catch (error) {
     sendDebugLog(`Cloud API test failed: ${error.message}`);
+    return { success: false, error: error.message };
+  }
+});
+
+ipcMain.handle('upload-and-process', async () => {
+  try {
+    const pickResult = await dialog.showOpenDialog(mainWindow, {
+      properties: ['openFile'],
+      filters: [{ name: 'Audio Files', extensions: ['wav', 'mp3', 'm4a', 'aac', 'webm', 'flac', 'ogg'] }]
+    });
+    if (pickResult.canceled || !pickResult.filePaths.length) {
+      return { success: false, error: 'No file selected' };
+    }
+    const sourcePath = pickResult.filePaths[0];
+
+    // Resolve recordings dir (same logic as get-recordings-dir)
+    const cfgRaw = await runPythonScript('simple_recorder.py', ['get-storage-path'], true);
+    const cfg = JSON.parse(cfgRaw.trim());
+    let recordingsDir;
+    if (cfg.storage_path) {
+      recordingsDir = path.join(cfg.storage_path, 'recordings');
+    } else if (app.isPackaged) {
+      recordingsDir = path.join(os.homedir(), 'Library', 'Application Support', 'stenoai', 'recordings');
+    } else {
+      recordingsDir = path.join(__dirname, '..', 'recordings');
+    }
+    if (!fs.existsSync(recordingsDir)) fs.mkdirSync(recordingsDir, { recursive: true });
+
+    // Copy with timestamped filename to avoid collisions
+    const ext = path.extname(sourcePath) || '.wav';
+    const ts = new Date().toISOString().replace(/[-:T]/g, '').split('.')[0];
+    const baseName = path.basename(sourcePath, ext).replace(/[^a-zA-Z0-9_-]/g, '_').slice(0, 40);
+    const destName = `Upload_${ts}_${baseName}${ext}`;
+    const destPath = path.join(recordingsDir, destName);
+    fs.copyFileSync(sourcePath, destPath);
+
+    const sessionName = `Meeting-${Math.random().toString(36).slice(2, 8).toUpperCase()}`;
+    addToProcessingQueue(destPath, sessionName, null);
+    return { success: true, audioFile: destPath, sessionName };
+  } catch (error) {
+    sendDebugLog(`Upload failed: ${error.message}`);
     return { success: false, error: error.message };
   }
 });
