@@ -745,7 +745,20 @@ Brief analysis of what was discussed about this topic.
 - [Action item 1]
 - [Action item 2]
 
-Only include information explicitly discussed. Do not infer or assume.
+## Customer Memory
+Personal/rapport notes — things that help recognise this person next visit. ONE bullet per fact. Cover ALL applicable categories the customer mentioned:
+- Hobbies / interests (e.g. "loves photography", "plays badminton weekly")
+- Family (e.g. "two kids aged 5 and 8", "wife is a teacher", "lives with elderly parent")
+- Work / occupation (e.g. "software engineer at a startup", "runs a bakery downtown")
+- Where they live / commute (e.g. "moved from Taichung last year", "drives 1 hour each way")
+- Recent activities mentioned (e.g. "just back from Japan trip", "started running last month")
+- Future plans they shared (e.g. "planning Korea trip in March", "going to start yoga next week")
+- Food / drink preferences mentioned (e.g. "loves ramen", "doesn't drink coffee")
+- Pets, sports teams, hobbies, side projects, anything personal but non-medical / non-action
+- Worries or stresses outside the meeting topic
+Skip anything already in Action Items or Key Points. Skip strictly medical/business facts. ONLY include things explicitly mentioned — do not infer.
+
+Format: `- [category]: [fact]` e.g. `- Family: two daughters (10 and 7), husband is a chef`. Section may be empty if nothing personal came up.
 
 Formatting rules (strict):
 - Always put a single space between ## or ### and the heading text.

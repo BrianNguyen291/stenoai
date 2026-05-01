@@ -4433,6 +4433,13 @@ Ask Steno
                     </ul>
                 </div>
 
+                <div class="meeting-section" id="customer-memory-section" style="display:none;">
+                    <h2 class="section-title">Customer Memory</h2>
+                    <ul class="key-points-list" id="detail-customer-memory">
+                        <!-- Personal rapport notes loaded here -->
+                    </ul>
+                </div>
+
                 <div class="meeting-section" id="audio-player-section" style="display:none;">
                     <h2 class="section-title">Audio</h2>
                     <audio id="meeting-audio-player" controls preload="metadata" style="width:100%;border-radius:8px;"></audio>
@@ -6528,7 +6535,25 @@ Session started - waiting for activity...
             } else {
                 detailActionItems.innerHTML = '<li style="color: var(--text-muted);">No action items identified</li>';
             }
-            
+
+            // Customer Memory — personal/rapport notes for next-visit context
+            const customerMemoryList = document.getElementById('detail-customer-memory');
+            const customerMemorySection = document.getElementById('customer-memory-section');
+            if (customerMemoryList && customerMemorySection) {
+                customerMemoryList.innerHTML = '';
+                const memory = selectedMeeting.customer_memory || [];
+                if (memory.length > 0) {
+                    memory.forEach(item => {
+                        const li = document.createElement('li');
+                        li.textContent = item;
+                        customerMemoryList.appendChild(li);
+                    });
+                    customerMemorySection.style.display = '';
+                } else {
+                    customerMemorySection.style.display = 'none';
+                }
+            }
+
             // Transcript — render diarised view if available
             populateTranscript(selectedMeeting);
 

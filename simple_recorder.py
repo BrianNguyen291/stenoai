@@ -129,6 +129,7 @@ class SimpleRecorder:
         discussion_areas = []
         key_points = []
         action_items = []
+        customer_memory = []
         current_section = None
         current_topic_title = None
         current_topic_lines = []
@@ -145,6 +146,8 @@ class SimpleRecorder:
                 current_section = 'keypoints'
             elif stripped.startswith('## Action Items'):
                 current_section = 'actions'
+            elif stripped.startswith('## Customer Memory'):
+                current_section = 'memory'
             elif stripped.startswith('### ') and current_section == 'topics':
                 if current_topic_title:
                     discussion_areas.append({"title": current_topic_title, "analysis": '\n'.join(current_topic_lines).strip()})
@@ -160,6 +163,8 @@ class SimpleRecorder:
                 key_points.append(stripped[2:])
             elif current_section == 'actions' and stripped.startswith('- '):
                 action_items.append(stripped[2:].replace('[ ] ', '').replace('[x] ', ''))
+            elif current_section == 'memory' and stripped.startswith('- '):
+                customer_memory.append(stripped[2:])
 
         if current_topic_title:
             discussion_areas.append({"title": current_topic_title, "analysis": '\n'.join(current_topic_lines).strip()})
@@ -167,11 +172,12 @@ class SimpleRecorder:
         summary_text = ' '.join(summary_parts)
         # Fallback: if model ignored the template (no `## Summary` heading found),
         # dump full output into summary so the user sees something instead of empty UI
-        if not summary_text and not discussion_areas and not key_points and not action_items:
+        if not summary_text and not discussion_areas and not key_points and not action_items and not customer_memory:
             summary_text = md_text.strip()
 
         return {
             "summary": summary_text,
+            "customer_memory": customer_memory,
             "participants": participants,
             "discussion_areas": discussion_areas,
             "key_points": key_points,
@@ -1394,6 +1400,13 @@ def _parse_meeting_markdown(md_path):
             if line.startswith('- '):
                 action_items.append(line[2:].replace('[ ] ', '').replace('[x] ', ''))
 
+    customer_memory = []
+    if 'customer memory' in sections:
+        for line in sections['customer memory'].split('\n'):
+            line = line.strip()
+            if line.startswith('- '):
+                customer_memory.append(line[2:])
+
     discussion_areas = []
     if 'key topics' in sections:
         current_topic = None
@@ -1444,6 +1457,7 @@ def _parse_meeting_markdown(md_path):
         'discussion_areas': discussion_areas,
         'key_points': key_points,
         'action_items': action_items,
+        'customer_memory': customer_memory,
         'transcript': sections.get('transcript', ''),
         'is_diarised': meta.get('is_diarised', False),
         'diarised_text': sections.get('transcript', '') if meta.get('is_diarised') else None,
