@@ -4433,6 +4433,11 @@ Ask Steno
                     </ul>
                 </div>
 
+                <div class="meeting-section" id="audio-player-section" style="display:none;">
+                    <h2 class="section-title">Audio</h2>
+                    <audio id="meeting-audio-player" controls preload="metadata" style="width:100%;border-radius:8px;"></audio>
+                </div>
+
                 <div class="meeting-section" id="transcript-section">
                     <h2 class="section-title">Full Transcript</h2>
                     <div class="transcript-container">
@@ -4548,6 +4553,9 @@ Ask Steno
                           </div>
                           <!-- Input row -->
                           <div class="ask-bar-input-row">
+                              <button id="ask-bar-listen-btn" title="Listen to recording" style="display:none;background:transparent;border:none;color:var(--text-secondary);cursor:pointer;padding:6px 8px;margin-right:6px;border-radius:6px;align-items:center;justify-content:center;">
+                                  <svg id="ask-bar-listen-icon" width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><polygon points="6,4 20,12 6,20"></polygon></svg>
+                              </button>
                               <input type="text" class="ask-bar-input" id="ask-bar-input" placeholder="Ask anything" autocomplete="off">
                               <button class="ask-bar-submit" id="ask-bar-submit" title="Ask" disabled>
                                   <svg viewBox="0 0 24 24" fill="currentColor">
@@ -6399,6 +6407,45 @@ Session started - waiting for activity...
             emptyState.style.display = 'none';
             meetingDetail.classList.add('show');
             
+            // Wire inline audio player + ask-bar Listen button to recording's audio file
+            try {
+                const audioEl = document.getElementById('meeting-audio-player');
+                const audioSection = document.getElementById('audio-player-section');
+                const listenBtn = document.getElementById('ask-bar-listen-btn');
+                const listenIcon = document.getElementById('ask-bar-listen-icon');
+                const audioFile = selectedMeeting.session_info?.audio_file;
+                if (audioEl && audioSection) {
+                    audioEl.pause();
+                    if (audioFile && require('fs').existsSync(audioFile)) {
+                        audioEl.src = `file://${encodeURI(audioFile)}`;
+                        audioSection.style.display = '';
+                        if (listenBtn) listenBtn.style.display = 'inline-flex';
+                    } else {
+                        audioEl.removeAttribute('src');
+                        audioEl.load();
+                        audioSection.style.display = 'none';
+                        if (listenBtn) listenBtn.style.display = 'none';
+                    }
+                    // (Re)bind ask-bar Listen toggle each meeting open
+                    if (listenBtn && !listenBtn._wired) {
+                        listenBtn.addEventListener('click', () => {
+                            const a = document.getElementById('meeting-audio-player');
+                            if (!a || !a.src) return;
+                            if (a.paused) a.play(); else a.pause();
+                        });
+                        if (listenIcon) {
+                            audioEl.addEventListener('play', () => {
+                                listenIcon.innerHTML = '<rect x="6" y="5" width="4" height="14"></rect><rect x="14" y="5" width="4" height="14"></rect>';
+                            });
+                            audioEl.addEventListener('pause', () => {
+                                listenIcon.innerHTML = '<polygon points="6,4 20,12 6,20"></polygon>';
+                            });
+                        }
+                        listenBtn._wired = true;
+                    }
+                }
+            } catch (e) { /* fs/audio failures non-fatal */ }
+
             // Populate details
             detailTitle.textContent = selectedMeeting.session_info?.name || 'Untitled Meeting';
             detailDate.textContent = formatDate(selectedMeeting.session_info?.processed_at);

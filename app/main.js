@@ -3359,10 +3359,11 @@ ipcMain.handle('upload-and-process', async () => {
     let recordingsDir;
     if (cfg.storage_path) {
       recordingsDir = path.join(cfg.storage_path, 'recordings');
-    } else if (app.isPackaged) {
-      recordingsDir = path.join(os.homedir(), 'Library', 'Application Support', 'stenoai', 'recordings');
     } else {
-      recordingsDir = path.join(__dirname, '..', 'recordings');
+      // Bundled Python (PyInstaller) always resolves to Application Support, regardless
+      // of whether Electron itself is packaged. Match that path here so Python parser
+      // can find the audio file later via get_data_dirs().
+      recordingsDir = path.join(os.homedir(), 'Library', 'Application Support', 'stenoai', 'recordings');
     }
     if (!fs.existsSync(recordingsDir)) fs.mkdirSync(recordingsDir, { recursive: true });
 

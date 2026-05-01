@@ -544,12 +544,7 @@ Transcript:
         
         print(f"✅ Complete processing saved: {summary_path}")
         
-        # Clean up WAV file after successful processing
-        try:
-            audio_path.unlink()
-            print(f"🗑️ Cleaned up audio file: {audio_path}")
-        except Exception as e:
-            print(f"⚠️ Could not delete audio file: {e}")
+        # Audio file kept on disk so user can play it back from the meeting view
         
         # Clear any recording state after successful processing
         state_file = Path("recorder_state.json")
@@ -697,12 +692,7 @@ Transcript:
             md_lines.append(notes_text)
         summary_path.write_text('\n'.join(md_lines), encoding='utf-8')
 
-        # Clean up
-        try:
-            audio_path.unlink()
-            print(f"🗑️ Cleaned up audio file: {audio_path}")
-        except Exception:
-            pass
+        # Audio file kept on disk so user can play it back from the meeting view
 
         state_file = Path("recorder_state.json")
         if state_file.exists():
@@ -1075,11 +1065,7 @@ def process_streaming(audio_file, name, notes):
             md_lines.append(notes_text)
         summary_path.write_text('\n'.join(md_lines), encoding='utf-8')
 
-        # Clean up audio
-        try:
-            audio_path.unlink()
-        except Exception:
-            pass
+        # Audio file kept on disk so user can play it back from the meeting view
 
         print(f"SAVED:{summary_path}", flush=True)
 
@@ -1429,12 +1415,28 @@ def _parse_meeting_markdown(md_path):
                 'analysis': '\n'.join(topic_lines).strip()
             })
 
+    # Try to locate the audio file on disk so the UI can play it back.
+    # Stem of *_summary.md → original recording filename (without ext).
+    audio_file_path = None
+    try:
+        from src.config import get_data_dirs as _get_data_dirs
+        recordings_dir = _get_data_dirs()["recordings"]
+        rec_stem = md_path.stem[:-len('_summary')] if md_path.stem.endswith('_summary') else md_path.stem
+        for ext in ('.wav', '.mp3', '.m4a', '.aac', '.webm', '.flac', '.ogg'):
+            candidate = recordings_dir / f"{rec_stem}{ext}"
+            if candidate.exists():
+                audio_file_path = str(candidate)
+                break
+    except Exception:
+        audio_file_path = None
+
     return {
         'session_info': {
             'name': meta.get('title', md_path.stem),
             'processed_at': meta.get('date', ''),
             'duration_seconds': meta.get('duration_seconds'),
             'summary_file': str(md_path),
+            'audio_file': audio_file_path,
             'output_language': meta.get('language'),
         },
         'summary': sections.get('summary', ''),
