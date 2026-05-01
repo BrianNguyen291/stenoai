@@ -33,8 +33,9 @@ def normalize_markdown(text: Optional[str]) -> Optional[str]:
         lambda m: '#' * (m.group(0).count('#')),
         text,
     )
-    # Heading: ###text -> ### text
-    text = re.sub(r'(?m)^(#{1,6})(?=\S)', r'\1 ', text)
+    # Heading: ###text -> ### text. (?!#) prevents single-# match when followed
+    # by another #, which would insert a space mid-marker (e.g. `##` → `# #`).
+    text = re.sub(r'(?m)^(#{1,6})(?!#)(?=\S)', r'\1 ', text)
     # Bullet: -text or *text at line start -> - text / * text
     text = re.sub(r'(?m)^([-*])(?=\S)', r'\1 ', text)
     # Collapse excess blank lines
