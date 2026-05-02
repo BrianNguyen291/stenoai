@@ -52,6 +52,14 @@ hiddenimports = [
     'dateutil',
     'dateutil.parser',
 
+    # DOCX export
+    'docx',
+    'docx.document',
+    'docx.text',
+    'docx.shared',
+    'lxml',
+    'lxml.etree',
+
     # Standard library modules that might be missed
     'json',
     'pathlib',

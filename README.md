@@ -47,6 +47,12 @@ If you're looking for a hosted desktop recording API, consider checking out [Rec
 
 ## Features
 
+### Export
+- Right‑click meeting → Export → Markdown / PDF / Word
+- PDF: `electron.webContents.printToPDF`
+- Word: via `stenoai export-docx` CLI command (python-docx)
+- Files: `app/main.js` (IPC), `app/index.html` (menu), `simple_recorder.py` (backend)
+
 - **Privacy-first** — 100% on-device; your recordings, transcripts, and summaries never leave your Mac
 - **In-app note-taking** — Jot notes while you record; they're folded straight into the AI summary
 - **Ask your meetings** — Natural-language Q&A across any saved note, including summary, key topics, and full transcript

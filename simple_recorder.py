@@ -2777,6 +2777,26 @@ def pull_model(model_name):
         print(json.dumps({"success": False, "error": str(e)}))
 
 
+@cli.command()
+@click.argument('output_path')
+def export_docx(output_path):
+    """Convert markdown from stdin to a .docx file at OUTPUT_PATH."""
+    try:
+        from docx import Document
+    except ImportError:
+        print(json.dumps({"success": False, "error": "python-docx not installed"}))
+        sys.exit(1)
+
+    md_content = sys.stdin.read()
+    doc = Document()
+    for paragraph in md_content.split('\n\n'):
+        stripped = paragraph.strip()
+        if stripped:
+            doc.add_paragraph(stripped)
+    doc.save(output_path)
+    print(json.dumps({"success": True, "path": output_path}))
+
+
 if __name__ == '__main__':
     import multiprocessing
     multiprocessing.freeze_support()

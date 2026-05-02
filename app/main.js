@@ -1395,6 +1395,67 @@ ipcMain.handle('update-meeting', async (event, summaryFilePath, updates) => {
   }
 });
 
+ipcMain.handle('export-meeting', async (event, { format, markdown }) => {
+  const fs = require('fs');
+  const path = require('path');
+
+  try {
+    const defaultExt = { md: 'md', pdf: 'pdf', docx: 'docx' };
+    const { canceled, filePath } = await dialog.showSaveDialog({
+      defaultPath: `meeting-${Date.now()}.${defaultExt[format]}`,
+      filters: [{ name: format.toUpperCase(), extensions: [defaultExt[format]] }]
+    });
+
+    if (canceled || !filePath) {
+      return { canceled: true };
+    }
+
+    if (format === 'md') {
+      await fs.promises.writeFile(filePath, markdown, 'utf8');
+      return { saved: true, path: filePath };
+    }
+
+    if (format === 'pdf') {
+      const win = new BrowserWindow({
+        show: false,
+        webPreferences: { nodeIntegration: true }
+      });
+      const html = `<html><body><pre style="white-space: pre-wrap; font-family: sans-serif;">${markdown.replace(/</g, '&lt;')}</pre></body></html>`;
+      await win.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(html)}`);
+      const pdfData = await win.webContents.printToPDF({});
+      await fs.promises.writeFile(filePath, pdfData);
+      win.close();
+      return { saved: true, path: filePath };
+    }
+
+    if (format === 'docx') {
+      const { spawn } = require('child_process');
+      const proc = spawn(getBackendPath(), ['export-docx', filePath], {
+        cwd: getBackendCwd()
+      });
+      proc.stdin.write(markdown);
+      proc.stdin.end();
+
+      let stderrBuf = '';
+      proc.stderr.on('data', d => { stderrBuf += d.toString(); });
+
+      await new Promise((resolve, reject) => {
+        proc.on('close', code => {
+          code === 0 ? resolve() : reject(new Error(stderrBuf || `exit code ${code}`));
+        });
+        proc.on('error', reject);
+      });
+
+      return { saved: true, path: filePath };
+    }
+
+    return { error: `Unsupported format: ${format}` };
+  } catch (err) {
+    console.error('Export error:', err);
+    return { error: err.message };
+  }
+});
+
 ipcMain.handle('delete-meeting', async (event, meetingData) => {
   try {
     const fs = require('fs');
